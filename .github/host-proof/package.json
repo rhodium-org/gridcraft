@@ -1,0 +1,9 @@
+{
+  "name": "gridcraft-host-proof",
+  "private": true,
+  "type": "module",
+  "description": "Fork only: proves the host extension points in the built web release (host-release.yml).",
+  "dependencies": {
+    "puppeteer-core": "25.18.1"
+  }
+}

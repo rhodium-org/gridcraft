@@ -1,0 +1,114 @@
+# rhodium-org fork only, never offered upstream: builds the web release zip with the host
+# extension points, in the same shape as upstream's `gridcraft-web-<version>.zip` release asset
+# (packaging/web/package.sh, as craft-common-actions' release.yml web job runs it), and publishes
+# it as a GitHub prerelease once .github/host-proof has driven every slot in the built wasm.
+# Push a tag `v<upstream version>-host.<n>` (v0.19.1-host.1) on the fork's host branch; the zip is
+# gridcraft-web-<upstream version>-host.<n>.zip with top folder gridcraft-web-<that version>/,
+# its sha256 beside it.
+name: Host release (web)
+
+on:
+  push:
+    tags: ["v*-host.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "An existing v*-host.* tag to build again (its release is replaced)"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: host-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  web:
+    name: Web (wasm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Read the version from the tag
+        run: |
+          [[ "$TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+-host\.[0-9]+)$ ]] || { echo "::error::tag $TAG is not v<x.y.z>-host.<n>"; exit 1; }
+          echo "VERSION=${BASH_REMATCH[1]}" >>"$GITHUB_ENV"
+          echo "GRIDCRAFT_VERSION=${BASH_REMATCH[1]}" >>"$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - id: rust
+        uses: storytold/craft-common-actions/actions/rust-channel@main
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust.outputs.toolchain }}
+          targets: ${{ steps.rust.outputs.targets }}
+          components: ${{ steps.rust.outputs.components }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: host-release-web
+      - uses: storytold/craft-common-actions/actions/install-trunk@main
+        with:
+          trunk-version: "0.21.14"
+      # The same fonts upstream's web release embeds (release.yml's craft-fonts-ref pin).
+      - name: Check out craft-fonts
+        uses: storytold/craft-common-actions/actions/checkout-craft-fonts@main
+        with:
+          ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+      - name: Test the host extension points
+        run: cargo test -p gridcraft-ui-egui --lib host_places
+      - name: Version the build as the release
+        run: cargo xtask version set "$VERSION"
+      - name: Build and zip
+        env:
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+          CRAFT_FONTS_REQUIRED: "1"
+          GRIDCRAFT_BUILD_SHA: ${{ github.sha }}
+        run: packaging/web/package.sh
+      - name: Check the zip's shape
+        run: |
+          zip="dist/release/gridcraft-web-$VERSION.zip"
+          list=$(unzip -Z1 "$zip")
+          for want in "gridcraft-web-$VERSION/index.html" "gridcraft-web-$VERSION/LICENSE-MIT" "gridcraft-web-$VERSION/LICENSE-APACHE"; do
+            grep -qx "$want" <<<"$list" || { echo "::error::$want missing from $zip"; exit 1; }
+          done
+          [ "$(grep -cE "^gridcraft-web-$VERSION/gridcraft-web-[0-9a-f]+_bg\.wasm$" <<<"$list")" = 1 ] || { echo "::error::expected one _bg.wasm"; exit 1; }
+          [ "$(grep -cE "^gridcraft-web-$VERSION/gridcraft-web-[0-9a-f]+\.js$" <<<"$list")" = 1 ] || { echo "::error::expected one glue .js"; exit 1; }
+          (cd dist/release && sha256sum "gridcraft-web-$VERSION.zip" >"gridcraft-web-$VERSION.zip.sha256" && cat "gridcraft-web-$VERSION.zip.sha256")
+      # Each slot driven in the built wasm by a page host, in headless Chrome: nothing is
+      # published unless every check passes. The screenshots are kept as the run's evidence.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prove the host extension points in the built release
+        working-directory: .github/host-proof
+        run: |
+          npm ci --no-audit --no-fund
+          mkdir -p "$RUNNER_TEMP/site" "$RUNNER_TEMP/proof"
+          unzip -q "$GITHUB_WORKSPACE/dist/release/gridcraft-web-$VERSION.zip" -d "$RUNNER_TEMP/site"
+          node prove.mjs "$RUNNER_TEMP/site/gridcraft-web-$VERSION" "$RUNNER_TEMP/proof" "$(command -v google-chrome)"
+      - name: Keep the proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-proof
+          path: ${{ runner.temp }}/proof
+          if-no-files-found: warn
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="GridCraft $VERSION: upstream ${VERSION%-host.*} with the host extension points (host places, AutoSave through a host that writes in place, saves a host confirms or refuses, the workbook shown). Web build only. See apps/gridcraft-web/src/host_ext.rs."
+          gh release delete "$TAG" -R "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --prerelease --title "GridCraft $VERSION (web, host extension points)" --notes "$notes" \
+            "dist/release/gridcraft-web-$VERSION.zip" "dist/release/gridcraft-web-$VERSION.zip.sha256"
