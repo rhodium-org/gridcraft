@@ -1,10 +1,11 @@
-use super::printing;
+use super::{host_places, printing};
 
 type PickSave = Box<dyn Fn(&str) -> Option<String>>;
 type OpenUrl = Box<dyn Fn(&str)>;
 type CopyHtml = Box<dyn FnMut(&str, &str) -> Result<(), String>>;
 type Download = Box<dyn Fn(&str, &[u8])>;
 type PrintPdf = Box<dyn Fn(&[u8])>;
+type HostOpen = Box<dyn Fn(&str, Option<&str>) -> Result<(), String>>;
 
 /// Host services the platform shell provides (file pickers, opening URLs).
 #[derive(Default)]
@@ -35,8 +36,21 @@ pub struct Services {
     /// Read the picture on the system clipboard for the ribbon and menu Paste commands when it
     /// holds no text (Cmd/Ctrl+V gets it from egui's `Event::PasteImage`).
     pub paste_image: Option<Box<dyn FnMut() -> Option<image::RgbaImage>>>,
-    /// Web: deliver a file to the user (name, bytes).
+    /// Web: deliver a file to the user (name, bytes). Hosted, the page gets it instead: exports
+    /// (PDF, CSV, web page), never waited for.
     pub download: Option<Download>,
+    /// Web, hosted: hand a workbook Save or Save As (.xlsx) to the host page
+    /// ([`host_places`]), instead of downloading it. An error means the page didn't get it, and
+    /// the save failed.
+    pub host_save: Option<HostSaveFn>,
+    /// Web, hosted: the places the host page keeps workbooks in and its switches (AutoSave,
+    /// confirmed saves), written by the bridge from the host's messages ([`host_places`]).
+    pub host_places: Option<host_places::HostPlaces>,
+    /// Web, hosted: ask the host to open a workbook from one of its places
+    /// (`gridcraft:open-request`): `(place, key)`, the key naming a workbook the host said lived
+    /// there (a Recent entry), or none for the host to ask which. The workbook comes back as any
+    /// host file does, through `inbox`. An error means the host wasn't asked.
+    pub host_open: Option<HostOpen>,
     /// Web: start an asynchronous file pick; the bytes arrive later in `inbox`.
     pub open_async: Option<Box<dyn Fn()>>,
     /// Files delivered asynchronously (name, bytes), opened on the next frame.
@@ -45,6 +59,9 @@ pub struct Services {
     /// no intermediate file) — opens the system print dialog on that PDF.
     pub print: Option<PrintPdf>,
 }
+
+/// [`Services::host_save`]: `(file name, bytes, what kind of save)`.
+pub type HostSaveFn = Box<dyn Fn(&str, &[u8], &host_places::HostSave) -> Result<(), String>>;
 
 /// Shared queue of files read asynchronously (browser file picker, drag and drop).
 pub type Inbox = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;

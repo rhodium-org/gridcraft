@@ -278,6 +278,18 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
                 ("ui.dialog", "Open Dialog", ""),
                 ("ui.backstage", "File (Backstage view)", "{page?: home|new|open|info|saveAs|print|export|options|account|close}"),
                 (
+                    "file.autosave",
+                    "AutoSave",
+                    "{value?: bool} (toggles without it) → {value}; turning it on is refused where AutoSave can't run (the browser, unless a host page writes in place)",
+                ),
+                (
+                    "ui.hostPlaces",
+                    "Host Places",
+                    "{} → {places: [{id, label, icon, open, saveAs}], document: {place, key, label} | null} (web, hosted)",
+                ),
+                ("ui.hostOpen", "Open from a Host Place", "{place, key?} → {asked}: asks the host page for a workbook (web, hosted)"),
+                ("ui.hostSaveAs", "Save As into a Host Place", "{place} → the save's result (web, hosted)"),
+                (
                     "ui.printSettings",
                     "Print Settings",
                     "{printer?: discovered name, copies?: 1..999, duplex?: printerDefault|off|longEdge|shortEdge|null, grayscale?: bool, refresh?: bool} → {printer,copies,duplex,grayscale,printers,ready,busy,discovering,status,detail}; {} inspects without submitting",

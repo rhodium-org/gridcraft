@@ -398,6 +398,8 @@ fn recent_list(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Ou
     let now = crate::now_ms() / 1000.0;
     for path in app.ui.recent.iter().take(limit).cloned().collect::<Vec<_>>() {
         let (name, folder) = split_path(&path);
+        // A workbook from a host page's place shows where it lives there.
+        let folder = app.ui.recent_places.get(&path).map_or(folder, |d| d.label.clone());
         let (rect, resp) = ui.allocate_exact_size(vec2(width, 44.0), Sense::click());
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
         let p = ui.painter();
@@ -420,6 +422,13 @@ fn recent_list(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Ou
         }
         let resp = resp.on_hover_text(&path);
         if resp.clicked() {
+            // A workbook from a host page's place reopens through the host, which sends it back.
+            if let Some(asked) = app.open_recent_from_host(&path) {
+                if let Err(e) = asked {
+                    app.message = Some(("GridCraft".into(), crate::clean_error(&e)));
+                }
+                continue;
+            }
             app.open_path(&path);
             if app.session.active().and_then(|d| d.path.as_deref()) == Some(path.as_str()) {
                 out.close = true;
@@ -573,7 +582,8 @@ fn new_page(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
 
 fn open_page(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) {
     let lang = app.ui.language;
-    if square_button(ui, Icon::OpenFolder, lang.tr("Browse…")).clicked() {
+    // A host page that offers places to open from owns opening: its places replace Browse….
+    if !app.host_owns(false) && square_button(ui, Icon::OpenFolder, lang.tr("Browse…")).clicked() {
         let before = app.session.active().map(|d| d.uid);
         app.open_dialog("open", json!({}));
         // Desktop pickers return at once; the web picker delivers later (see `SheetApp::logic`).
@@ -581,9 +591,27 @@ fn open_page(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outc
             out.close = true;
         }
     }
+    host_place_buttons(app, ui, false, out);
     ui.add_space(22.0);
     section(ui, lang, "Recent");
     recent_list(app, ui, bs, out, usize::MAX);
+}
+
+/// Web, hosted: a button for each place the host page offers for Open, or for Save As
+/// (`save_as`), after Browse… ([`crate::host_places`]). The host asks where in it.
+fn host_place_buttons(app: &mut SheetApp, ui: &mut Ui, save_as: bool, out: &mut Outcome) {
+    let Some(places) = app.services.host_places.as_ref().filter(|_| app.hosted()).map(crate::host_places::HostPlaces::list) else { return };
+    for place in places.into_iter().filter(|p| if save_as { p.save_as } else { p.open }) {
+        ui.add_space(8.0);
+        if square_button(ui, if save_as { Icon::Save } else { Icon::OpenFolder }, &place.label).clicked() {
+            let (id, params) = if save_as { ("ui.hostSaveAs", json!({"place": place.id})) } else { ("ui.hostOpen", json!({"place": place.id})) };
+            match app.run(id, params) {
+                Ok(_) if save_as => out.close = true,
+                Ok(_) => {}
+                Err(e) => app.message = Some(("GridCraft".into(), crate::clean_error(&e))),
+            }
+        }
+    }
 }
 
 /// Review › Protect Workbook and File › Info › Protect Workbook: the protect dialog (with an
@@ -609,7 +637,9 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
         return;
     };
     let title = d.display_title();
-    let path = d.path.clone();
+    // Web, hosted: where the workbook lives in the host page's place, as the host said.
+    let place = app.services.host_places.as_ref().and_then(|p| p.document(d.uid)).map(|p| p.label);
+    let path = d.path.clone().or(place);
     let sheets = d.wb.sheets.len();
     let protected = d.wb.protected_structure;
     let current: Vec<String> = {
@@ -698,7 +728,13 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
     // Desktop: the system Save dialog. Web: the file downloads.
     let web = app.services.pick_save.is_none() && app.services.download.is_some();
     let label = if web { format!("{} (.{fmt})", lang.tr("Download")) } else { lang.tr("Browse…").to_string() };
-    if square_button(ui, Icon::OpenFolder, &label).clicked() && app.commit_edit(0, 0, false, false) {
+    // A host page that offers places to save into owns saving the workbook: its places replace
+    // the button for an .xlsx workbook (a copy in another format still goes to the page).
+    let owned = fmt == "xlsx" && app.host_owns(true);
+    if fmt == "xlsx" {
+        host_place_buttons(app, ui, true, out);
+    }
+    if !owned && square_button(ui, Icon::OpenFolder, &label).clicked() && app.commit_edit(0, 0, false, false) {
         if fmt == "xlsx" {
             let before = app.session.active().map(|d| (d.path.clone(), d.is_dirty()));
             app.open_dialog("saveAs", json!({}));

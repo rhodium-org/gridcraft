@@ -18,6 +18,7 @@ mod editing;
 pub(crate) use editing::{DRAFT_CODE_HIDDEN, DRAFT_SHEET_GONE};
 mod files;
 mod fonts;
+mod host;
 mod input;
 mod keys;
 mod prefs;
@@ -83,6 +84,7 @@ impl SheetApp {
             parked: HashMap::new(),
             native_windows: false,
             arrange_windows: None,
+            host_docs: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: Default::default(),
         }
@@ -140,6 +142,7 @@ impl SheetApp {
         updates_ui::tick(self, ctx);
         // Files read asynchronously (web file picker, dropped files).
         self.poll_async_opens();
+        self.settle_host();
         self.autosave(ctx);
         self.update_title(ctx);
         self.request_hidden_paint(ctx);

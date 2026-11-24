@@ -37,6 +37,7 @@ pub mod formula_bar;
 mod formula_locale;
 pub mod function_library;
 pub mod grid;
+pub mod host_places;
 pub mod i18n;
 pub mod icons;
 pub mod keymap;
@@ -77,7 +78,7 @@ mod services;
 mod state;
 
 pub use clock::{monotonic_ms, now_ms};
-pub use services::{Chrome, Inbox, Services};
+pub use services::{Chrome, HostSaveFn, Inbox, Services};
 pub use state::{NoticeKind, OpenWindow, SaveAnswer, SheetView};
 pub mod desktop_theme;
 
@@ -107,6 +108,9 @@ pub struct UiState {
     /// change. A preference like the rest of this struct — it stays on across restarts (#1901).
     pub autosave: bool,
     pub recent: Vec<String>,
+    /// Web, hosted: where the Recent entries that came from a host page's place live
+    /// ([`host_places`]), by entry, so they reopen through the host.
+    pub recent_places: std::collections::BTreeMap<String, host_places::DocumentPlace>,
     /// One-shot keytip request for a ribbon control: set when a keytip action resolves to
     /// [`keytips::Action::Control`], consumed (and cleared) by the control's render site.
     #[serde(skip)]
@@ -157,6 +161,7 @@ impl Default for UiState {
             highlight_active_row: false,
             autosave: false,
             recent: vec![],
+            recent_places: std::collections::BTreeMap::new(),
             keytip_invoke: None,
             keytip_invoke_next: None,
             language: i18n::Language::En,
@@ -321,6 +326,9 @@ pub struct SheetApp {
     pub native_windows: bool,
     /// View › Arrange All's layout and windows, waiting for the native windows to move.
     pub arrange_windows: Option<(String, Vec<u64>)>,
+    /// Web, hosted: numbered saves still out and the names the host knows workbooks by
+    /// ([`host_places`]).
+    host_docs: host_places::HostDocs,
     /// The update check, the startup prompt and a running self-update (desktop only).
     #[cfg(not(target_arch = "wasm32"))]
     updates_rt: updates_ui::Runtime,

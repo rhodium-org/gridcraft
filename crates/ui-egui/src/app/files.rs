@@ -76,7 +76,7 @@ impl SheetApp {
     }
 
     /// Opens files that arrived asynchronously (web file picker, dropped files).
-    pub(super) fn poll_async_opens(&mut self) {
+    pub(crate) fn poll_async_opens(&mut self) {
         let arrived: Vec<(String, Vec<u8>)> = self
             .services
             .inbox
@@ -89,6 +89,7 @@ impl SheetApp {
                 // A file picked from File › Open (web) arrives here: show it, not the Backstage.
                 Ok(r) => {
                     self.backstage = None;
+                    self.note_host_open(&name);
                     self.show_open_warnings(&r);
                 }
                 Err(e) if e.contains(gridcraft_engine::io::PASSWORD_REQUIRED) => {
@@ -104,7 +105,11 @@ impl SheetApp {
     /// AutoSave: save workbooks that have a file shortly after they change. This decision lives in
     /// `logic` so a hidden or logic-only frame still saves; the monotonic timestamp check keeps a
     /// forced hidden UI pass from saving the same change twice.
-    pub(super) fn autosave(&mut self, ctx: &egui::Context) {
+    pub(crate) fn autosave(&mut self, ctx: &egui::Context) {
+        // Web, hosted: through a host page that writes Save back in place ([`crate::host_places`]).
+        if self.host_rewrites() {
+            return self.host_autosave(ctx);
+        }
         let dirty_xlsx = self.session.active().is_some_and(|d| d.is_dirty() && d.path.as_deref().is_some_and(|p| p.ends_with(".xlsx")));
         let now = crate::monotonic_ms();
         let autosave_due =

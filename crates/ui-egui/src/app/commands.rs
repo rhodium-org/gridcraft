@@ -147,6 +147,10 @@ impl SheetApp {
 
     /// UI-only commands (dialogs, view toggles that aren't saved in the file).
     fn run_ui_command(&mut self, id: &str, p: &Json) -> Option<Result<Json, String>> {
+        // Web, hosted: Save and Save As through the host page, AutoSave, its places.
+        if let Some(r) = self.host_command(id, p) {
+            return Some(r);
+        }
         let r = match id {
             "app.checkForUpdates" | "help.checkForUpdates" => {
                 self.check_for_updates();
@@ -371,6 +375,10 @@ impl SheetApp {
             return;
         }
         match name {
+            // A host page that declared places to open from owns opening: Open shows them
+            // (backstage Open) instead of the browser's picker, so every workbook arrives
+            // through the host.
+            "open" if self.host_owns(false) => self.open_backstage(backstage::Page::Open),
             "open" => {
                 if let Some(start) = &self.services.open_async {
                     start();
@@ -378,6 +386,12 @@ impl SheetApp {
                     && let Some(path) = pick()
                 {
                     self.open_path(&path);
+                }
+            }
+            // Web, hosted: Save As hands the workbook to the host page.
+            "saveAs" if self.hosted() => {
+                if let Err(e) = self.save_to_host(true) {
+                    self.alert(e);
                 }
             }
             "saveAs" => {

@@ -157,6 +157,28 @@ The messages and both transports are the shared contract of [`craft-web-host`](h
 - **Files from the host are untrusted input.** An opened file goes through the same reading as one picked with File ▸ Open or dropped on the window, with the same format limits; before it is copied into the app's memory, its size is checked against the host open limit (512 MiB) and a larger file is refused, and a name is cut to 255 characters.
 - **The event and message names are the interface.** `gridcraft:ready`, `gridcraft:open`, `gridcraft:save`, `gridcraft:dirty` and `gridcraft:failed`, and the fields they carry (the same as the `?host=parent` messages), stay stable; changing one is a breaking change.
 
+### Places, AutoSave and confirmed saves
+
+Beyond the messages above, a host (either mode) may declare more. Each is optional: a host that
+sends none sees no change, except that `gridcraft:save` now says `saveAs: true` for Save As and
+carries `export`.
+
+| Message | Direction | Fields |
+|---|---|---|
+| `gridcraft:places` | page → app | `places: [{ id, label, icon?, open, saveAs }]`. Backstage Open lists each place with `open: true` and Save As each with `saveAs: true`. While a place offers Open, the page owns opening: Ctrl+O and File › Open show its places instead of the browser's file picker. Sending it again replaces the list; an empty list removes them. `icon` (an image data URI) is kept but not drawn yet. |
+| `gridcraft:open-request` | app → page | `place`, `key?`. The person chose a place in Open, or a Recent workbook that lives in one (`key`, as the page named it). Ask your own questions and answer with `gridcraft:open`; nothing needs answering on a cancel. |
+| `gridcraft:document-place` | page → app | `place`, `key?`, `label?`, sent after an open or a save: where the workbook lives. File › Info shows `label`, and its Recent entry reopens through `open-request` with `key`. |
+| `gridcraft:save` | app → page | as above, plus `saveAs` (`true` for Save As), `export` (`true` for anything but the .xlsx workbook: a PDF, CSV or web page copy), `place` for a Save As into one of your places, `auto: true` for a save AutoSave sent. |
+| `gridcraft:autosave` | page → app | `available`: `true` when the page writes Save back where the workbook came from. GridCraft's AutoSave can then be turned on, and a couple of seconds after each change to an .xlsx workbook the page sent (or that was saved to it) it sends `gridcraft:save` with `auto: true`. `false` takes it back. |
+| `gridcraft:confirm-saves` | page → app | `value: true`: from now on each workbook Save carries an `id`, and the workbook counts as saved only once you answer `gridcraft:saved { id }`. Until then `gridcraft:dirty` stays `true`. Exports are never numbered. |
+| `gridcraft:save-failed` | page → app | `id`, `message?`: that save was not stored. The workbook keeps its unsaved changes and the message is shown. |
+| `gridcraft:document` | app → page | `id`, `name?`, `title`, `open`, `dirty`, `documents`: the workbook the window shows (ids are strings; `name` is the file name you know it by, absent for a new workbook; `documents` lists every open workbook's id). Sent when the workbook shown, its name or the open workbooks change. |
+
+A page's own tests can drive these through `window.gridcraft.execute`: `ui.hostPlaces` returns
+`{ places, document }`, `ui.hostOpen { place, key? }` does what choosing a place or a Recent entry
+does, `ui.hostSaveAs { place }` saves into a place, and `file.autosave { value }` turns AutoSave on
+or off (`{ value }`, or an error where AutoSave can't run).
+
 ### Driving it from the page (`window.gridcraft`)
 
 Every GridCraft web build puts `window.gridcraft` on the page, from [`craft-web-api`](https://github.com/storytold/craft-libs/tree/main/crates/web-api) (storytold/craft-libs#413), the same shape in every Craft app. `gridcraft.request(method, params)` calls any method of the control channel the desktop app serves (`docs/control-protocol.md`), and `execute(command, params)`, `commands()`, `docInspect(params)`, `uiInspect(params)` and `screenshot(params)` are shortcuts for the common ones. Each returns a Promise that resolves with the method's result and rejects with an `Error`; a call the app does not answer within 30 seconds rejects, and the app skips it if it has not started it; a call the app has already taken still finishes, so a retry after a timeout can apply a command twice.
